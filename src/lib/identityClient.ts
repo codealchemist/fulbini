@@ -32,3 +32,34 @@ export async function getAuthToken(): Promise<string | null> {
     return null
   }
 }
+
+/**
+ * Sends the browser straight to Google's OAuth screen via GoTrue's authorize
+ * endpoint, skipping the widget's own login modal entirely. GoTrue redirects
+ * back to this same origin with an `#access_token=...` hash afterwards,
+ * which the widget's `init()` (already running — see AuthContext) picks up
+ * on its own, same as it does for invite/recovery links.
+ */
+export function redirectToGoogleSignIn(): void {
+  window.location.href = '/.netlify/identity/authorize?provider=google'
+}
+
+const UNAUTHORIZED_EVENT = 'identity:unauthorized'
+
+/**
+ * The football proxy function returns 401 when the token it was sent is
+ * missing/invalid/expired (see netlify/functions/football.mts) — which can
+ * happen even while the widget's own cached `currentUser()` still looks
+ * "logged in" client-side (e.g. a refresh token that's since been revoked).
+ * api/client.ts calls this on any 401 so AuthContext can drop back to the
+ * signed-out state instead of leaving the app stuck showing broken,
+ * half-authenticated panels everywhere.
+ */
+export function reportUnauthorized(): void {
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+}
+
+export function onUnauthorized(cb: () => void): () => void {
+  window.addEventListener(UNAUTHORIZED_EVENT, cb)
+  return () => window.removeEventListener(UNAUTHORIZED_EVENT, cb)
+}

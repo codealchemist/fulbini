@@ -38,9 +38,17 @@ To enable it on your site:
 1. **Site configuration → Identity → Enable Identity.**
 2. **Site configuration → Identity → External providers → toggle Google on.** No Google Cloud Console setup needed — Netlify ships a default, shared OAuth app for this, so flipping the toggle is the whole setup. Nothing to configure in code either: the widget's login modal shows a "Sign in with Google" button automatically once a provider is enabled here.
    - Optional: register your own OAuth Client ID/Secret in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and paste it into this same screen if you want *your* app name/logo on Google's consent screen instead of Netlify's shared one (redirect URI would be `https://<your-site>/.netlify/identity/callback`). Purely cosmetic — the default app works identically otherwise.
-3. That's it locally too: `netlify dev` proxies Identity the same way it proxies `/api/football/*`, as long as this folder is linked to the Netlify site where you enabled it (`npx netlify link`).
 
 **Passkeys/WebAuthn are not supported** — checked against the widget's actual source (no WebAuthn code anywhere) and current Netlify community status (it's an open feature request, not shipped). Email/password and any OAuth providers you enable (Google, GitHub, GitLab, Bitbucket) are what's available.
+
+### Local development without Identity
+
+Unlike Functions and Blobs, **Identity (GoTrue) is a hosted-only backend** — `netlify dev` can't run it locally. A request from `localhost` for `/.netlify/identity/*` gets redirected to your real production identity endpoint, and GoTrue's CORS policy only trusts your production origin, so the browser blocks it. There's no dashboard setting to add `localhost` as a trusted Identity origin — the real Google-login flow simply can't be exercised against a local dev server. Test that part directly on the deployed site (or a deploy preview).
+
+To keep local development of everything else unblocked:
+
+- **Frontend:** set `VITE_DEV_BYPASS_AUTH=true` in your local `.env` and `AuthProvider` skips loading Netlify Identity entirely, using a fake signed-in session instead. Gated on `import.meta.env.DEV`, which Vite statically replaces at build time — this branch doesn't exist in a production build regardless of what env vars happen to be set, so it can't be flipped on by accident in prod.
+- **Backend:** `netlify/functions/football.mts` skips its own auth check when `process.env.NETLIFY_DEV === 'true'` — a flag netlify-cli sets automatically for every local invocation and that a real deployed function never sees. No `.env` entry needed for this half; it's automatic under `netlify dev`.
 
 ### Invite-only lock-down
 

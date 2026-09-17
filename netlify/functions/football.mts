@@ -30,8 +30,17 @@ const API_BASE = 'https://v3.football.api-sports.io'
 // the request arrives as.
 const PATH_MARKER = '/football'
 
+// Set automatically by netlify-cli for every function invocation under
+// `netlify dev` — never present in a real deployed function, so this can't
+// be used to bypass auth in production. Identity itself is a hosted-only
+// backend GoTrue can't run locally, so a real session is unobtainable in
+// dev (the identity request gets redirected to the production origin and
+// blocked by its CORS policy) — this keeps local API/caching development
+// unblocked without weakening the real production check at all.
+const isLocalDev = process.env.NETLIFY_DEV === 'true'
+
 export const handler: Handler = async (event: HandlerEvent, context: HandlerContext) => {
-  if (!context.clientContext?.user) {
+  if (!context.clientContext?.user && !isLocalDev) {
     return json({ error: 'Sign in required.' }, 401)
   }
 

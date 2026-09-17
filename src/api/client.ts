@@ -1,5 +1,5 @@
 import type { ApiEnvelope } from './types'
-import { getAuthToken } from '../lib/identityClient'
+import { getAuthToken, reportUnauthorized } from '../lib/identityClient'
 
 const BASE = '/api/football'
 
@@ -35,6 +35,21 @@ async function authorizedFetch(url: string, signal?: AbortSignal): Promise<Respo
   })
 }
 
+async function throwForErrorResponse(res: Response): Promise<never> {
+  let message = `Request failed (${res.status})`
+  try {
+    const body = await res.json()
+    if (body?.error) message = body.error
+  } catch {
+    // ignore parse failure, keep default message
+  }
+  // A 401 here means the token was missing/invalid/expired server-side, even
+  // if the widget's own cached currentUser() still looks logged in — drop
+  // back to the signed-out state instead of leaving the app half-broken.
+  if (res.status === 401) reportUnauthorized()
+  throw new ApiError(message, res.status)
+}
+
 export async function apiGet<T>(
   path: string,
   params?: Record<string, string | number | boolean | undefined | null>,
@@ -42,16 +57,7 @@ export async function apiGet<T>(
 ): Promise<T[]> {
   const res = await authorizedFetch(`${BASE}${path}${buildQuery(params)}`, signal)
 
-  if (!res.ok) {
-    let message = `Request failed (${res.status})`
-    try {
-      const body = await res.json()
-      if (body?.error) message = body.error
-    } catch {
-      // ignore parse failure, keep default message
-    }
-    throw new ApiError(message, res.status)
-  }
+  if (!res.ok) await throwForErrorResponse(res)
 
   // The API documents 204 No Content as a normal empty-result response for
   // every endpoint; there's no JSON body to parse in that case.
@@ -79,16 +85,7 @@ export async function apiGetObject<T>(
 ): Promise<T> {
   const res = await authorizedFetch(`${BASE}${path}${buildQuery(params)}`, signal)
 
-  if (!res.ok) {
-    let message = `Request failed (${res.status})`
-    try {
-      const body = await res.json()
-      if (body?.error) message = body.error
-    } catch {
-      // ignore parse failure, keep default message
-    }
-    throw new ApiError(message, res.status)
-  }
+  if (!res.ok) await throwForErrorResponse(res)
 
   if (res.status === 204) return {} as T
 
