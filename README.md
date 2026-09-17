@@ -29,6 +29,14 @@ A small side-index (`football-fixture-status` blob store) records a fixture's id
 
 Because many browser tabs/users can be polling the same live data at once, the frontend adds random jitter (up to 60s, re-rolled every cycle — see `LIVE_DATA_JITTER_MS` in `src/hooks/useApi.ts`) on top of each poll interval. This staggers concurrent clients so they don't all miss the 30s cache window at the same instant: the first one to land after it goes stale refreshes the blob, and the rest land moments later and get a cache hit instead of each independently calling the upstream API.
 
+### Load balancing across multiple accounts
+
+For even more quota, set `API_FOOTBALL_KEYS` to a comma-separated list of keys from multiple API-Football accounts instead of the single `API_FOOTBALL_KEY` — combined daily quota then scales with the number of accounts. Requests are load-balanced **round robin** across them (`netlify/functions/lib/apiKeys.ts`), only on an actual upstream call (a cache hit doesn't rotate anything, since it never calls the API at all).
+
+The rotation counter lives in Netlify Blobs rather than in-memory, specifically so it's a real round robin across *all* traffic — an in-memory counter would only rotate within one warm function container, which under real load means many concurrent containers each doing their own independent, uncoordinated rotation. It's not perfectly atomic (two concurrent requests can occasionally read the same counter value and land on the same key), which is fine for load balancing — it only needs to be roughly even, not exact. If the counter itself is unavailable, key selection falls back to a time-based pick rather than failing the request, same "never let the cache/coordination layer block real functionality" principle as the response cache above. The response carries an `x-api-key-index` header so you can confirm rotation is actually happening.
+
+This is load balancing only, not failover — a request that happens to land on a key whose account is out of quota isn't retried on a different one. Worth building if it turns out to matter in practice.
+
 ## Authentication
 
 Sign-in is handled by [Netlify Identity](https://docs.netlify.com/manage/security/secure-access-to-sites/identity/), wired up in `src/context/AuthContext.tsx` (lazy-loads `netlify-identity-widget` so its ~60kB doesn't block the initial dashboard paint) and surfaced via the account button in the header (desktop) and bottom nav (mobile).

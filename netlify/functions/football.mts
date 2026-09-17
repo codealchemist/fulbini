@@ -1,10 +1,14 @@
 import type { Handler, HandlerContext, HandlerEvent, HandlerResponse } from '@netlify/functions'
 import { buildCacheKey, classifyTier, indexFixtureStatuses, readCache, writeCache, type CacheTier } from './lib/cache.ts'
+import { API_KEYS, nextApiKey } from './lib/apiKeys.ts'
 
 // Proxies the app's /api/football/* calls to the real API-Sports endpoint,
 // attaching the API key server-side so it never reaches the browser bundle.
 // Get a key from https://dashboard.api-football.com and set API_FOOTBALL_KEY
 // as a Netlify environment variable (Site configuration > Environment variables).
+// Multiple accounts: set API_FOOTBALL_KEYS to a comma-separated list instead
+// — see lib/apiKeys.ts — and requests are load-balanced round robin across
+// them, so combined daily quota scales with the number of accounts.
 //
 // This app is invite-only (see src/components/auth/AuthGate.tsx for the UI
 // side of that), so this function requires a signed-in Netlify Identity user
@@ -44,9 +48,8 @@ export const handler: Handler = async (event: HandlerEvent, context: HandlerCont
     return json({ error: 'Sign in required.' }, 401)
   }
 
-  const apiKey = process.env.API_FOOTBALL_KEY
-  if (!apiKey) {
-    return json({ error: 'API_FOOTBALL_KEY is not configured on the server.' }, 500)
+  if (API_KEYS.length === 0) {
+    return json({ error: 'API_FOOTBALL_KEY (or API_FOOTBALL_KEYS) is not configured on the server.' }, 500)
   }
 
   const path = event.path
@@ -90,6 +93,10 @@ export const handler: Handler = async (event: HandlerEvent, context: HandlerCont
     console.error('[football] tier classification failed, defaulting to "live":', err)
   }
 
+  // Only picked on an actual upstream call (not on a cache hit above) — no
+  // point rotating the counter for a request we're not going to make.
+  const { key: apiKey, index: keyIndex } = await nextApiKey()
+
   let upstreamRes: Response
   try {
     upstreamRes = await fetch(upstreamUrl, {
@@ -127,6 +134,7 @@ export const handler: Handler = async (event: HandlerEvent, context: HandlerCont
       'cache-control': 'no-store',
       'x-cache': 'MISS',
       'x-cache-tier': tier,
+      'x-api-key-index': String(keyIndex),
     },
     body,
   }
