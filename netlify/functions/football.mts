@@ -1,5 +1,5 @@
 import type { Handler, HandlerContext, HandlerEvent, HandlerResponse } from '@netlify/functions'
-import { buildCacheKey, classifyTier, indexFixtureStatuses, readCache, writeCache } from './lib/cache.ts'
+import { buildCacheKey, classifyTier, indexFixtureStatuses, readCache, writeCache, type CacheTier } from './lib/cache.ts'
 
 // Proxies the app's /api/football/* calls to the real API-Sports endpoint,
 // attaching the API key server-side so it never reaches the browser bundle.
@@ -61,6 +61,10 @@ export const handler: Handler = async (event: HandlerEvent, context: HandlerCont
   const upstreamUrl = `${API_BASE}${upstreamPath}${search ? `?${search}` : ''}`
   const cacheKey = buildCacheKey(upstreamPath, searchParams)
 
+  // The Blobs cache is a best-effort optimization layer — any failure in it
+  // (a transient hiccup, a bug in cache.ts, whatever) must degrade to "treat
+  // as a cache miss" and still serve real data, never take the whole request
+  // down. Only a genuine upstream API failure should produce an error.
   try {
     const cached = await readCache(cacheKey)
     if (cached) {
@@ -75,33 +79,56 @@ export const handler: Handler = async (event: HandlerEvent, context: HandlerCont
         body: cached.body,
       }
     }
+  } catch (err) {
+    console.error('[football] blob cache read failed, continuing without cache:', err)
+  }
 
-    const tier = await classifyTier(upstreamPath, searchParams)
-    const upstreamRes = await fetch(upstreamUrl, {
+  let tier: CacheTier = 'live'
+  try {
+    tier = await classifyTier(upstreamPath, searchParams)
+  } catch (err) {
+    console.error('[football] tier classification failed, defaulting to "live":', err)
+  }
+
+  let upstreamRes: Response
+  try {
+    upstreamRes = await fetch(upstreamUrl, {
       headers: {
         'x-apisports-key': apiKey,
         accept: 'application/json',
       },
     })
-    const body = await upstreamRes.text()
+  } catch (err) {
+    console.error('[football] upstream fetch to api-football failed:', err)
+    return json({ error: 'Could not reach the football API.', detail: String(err) }, 502)
+  }
 
-    if (upstreamRes.ok) {
+  let body: string
+  try {
+    body = await upstreamRes.text()
+  } catch (err) {
+    console.error('[football] failed to read the upstream response body:', err)
+    return json({ error: 'Could not read the football API response.', detail: String(err) }, 502)
+  }
+
+  if (upstreamRes.ok) {
+    try {
       await indexFixtureStatuses(upstreamPath, body)
       await writeCache(cacheKey, { storedAt: Date.now(), tier, status: upstreamRes.status, body })
+    } catch (err) {
+      console.error('[football] blob cache write failed (response is still served):', err)
     }
+  }
 
-    return {
-      statusCode: upstreamRes.status,
-      headers: {
-        'content-type': 'application/json',
-        'cache-control': 'no-store',
-        'x-cache': 'MISS',
-        'x-cache-tier': tier,
-      },
-      body,
-    }
-  } catch (err) {
-    return json({ error: 'Upstream request to api-football failed', detail: String(err) }, 502)
+  return {
+    statusCode: upstreamRes.status,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'no-store',
+      'x-cache': 'MISS',
+      'x-cache-tier': tier,
+    },
+    body,
   }
 }
 
