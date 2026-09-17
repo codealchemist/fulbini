@@ -3,6 +3,7 @@ import { Trophy, Home } from 'lucide-react'
 import clsx from 'clsx'
 import { SearchBar } from '../search/SearchBar'
 import { PhotoToggle } from './PhotoToggle'
+import { AccountButton } from './AccountButton'
 import { APP_VERSION } from '../../lib/version'
 
 export function Header() {
@@ -25,6 +26,7 @@ export function Header() {
         <SearchBar className="relative ml-auto hidden max-w-sm flex-1 md:block" />
 
         <PhotoToggle className="hidden md:flex" />
+        <AccountButton className="hidden md:flex" />
       </div>
     </header>
   )

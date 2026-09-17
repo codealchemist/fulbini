@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Radio, CheckCircle2, CalendarClock } from 'lucide-react'
 import { getFixturesByDate } from '../api/endpoints'
-import { useApi } from '../hooks/useApi'
+import { LIVE_DATA_JITTER_MS, useApi } from '../hooks/useApi'
 import { toISODate, isSameDay, formatFullDate } from '../lib/date'
 import { categorizeFixtures } from '../lib/fixtures'
 import { DatePicker } from '../components/calendar/DatePicker'
@@ -21,6 +21,7 @@ export function DashboardPage() {
 
   const { data, loading, error, refetch } = useApi((signal) => getFixturesByDate(iso, signal), [iso], {
     pollMs: isToday ? 45_000 : undefined,
+    jitterMs: isToday ? LIVE_DATA_JITTER_MS : undefined,
   })
 
   const { live, played, upcoming } = useMemo(() => categorizeFixtures(data ?? []), [data])

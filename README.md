@@ -11,10 +11,45 @@ A live football (soccer) dashboard built on the [API-Football](https://www.api-f
 - **react-router-dom** for routing
 - **html-to-image** for the clipboard-copy feature
 - **Netlify Functions** as a thin server-side proxy to API-Football, so your API key never ships in the browser bundle
+- **Netlify Identity** (via `netlify-identity-widget`) for sign-in — email/password plus Google, once configured (see below)
 
 ## Why a proxy function?
 
 API-Football/API-Sports keys are meant for server-side use. A plain Vite SPA would embed the key in the built JS for anyone to read. Instead, `netlify/functions/football.mts` forwards `/api/football/*` requests to `https://v3.football.api-sports.io/*`, attaching the key from the `API_FOOTBALL_KEY` environment variable server-side. The React app never sees the key.
+
+## Caching & API quota
+
+API-Football plans cap requests per day, so the proxy function caches responses in [Netlify Blobs](https://docs.netlify.com/blobs/overview/) (`netlify/functions/lib/cache.ts`) rather than re-hitting the upstream API on every request. Each request is classified into one of three tiers based on its params (and, for fixture-scoped endpoints, whether that fixture has already finished):
+
+- **historical** — finished fixtures (and everything scoped to them: lineups, statistics, events, player ratings) and past-season/past-date queries. These never change, so they're cached forever.
+- **live** — today's fixtures, `live=all`, in-progress matches, and current-season data. Re-checked against upstream **no more than once every 30 seconds**; everything else is served straight from the cached blob.
+- **reference** — static-ish lookups with no date/season (team/player/coach search, squads, leagues). Cached for 6 hours.
+
+A small side-index (`football-fixture-status` blob store) records a fixture's id once it's seen with a finished status, so the very next request for its lineups/stats/events/players is served from cache forever instead of hitting the API again.
+
+Because many browser tabs/users can be polling the same live data at once, the frontend adds random jitter (up to 60s, re-rolled every cycle — see `LIVE_DATA_JITTER_MS` in `src/hooks/useApi.ts`) on top of each poll interval. This staggers concurrent clients so they don't all miss the 30s cache window at the same instant: the first one to land after it goes stale refreshes the blob, and the rest land moments later and get a cache hit instead of each independently calling the upstream API.
+
+## Authentication
+
+Sign-in is handled by [Netlify Identity](https://docs.netlify.com/manage/security/secure-access-to-sites/identity/), wired up in `src/context/AuthContext.tsx` (lazy-loads `netlify-identity-widget` so its ~60kB doesn't block the initial dashboard paint) and surfaced via the account button in the header (desktop) and bottom nav (mobile).
+
+To enable it on your site:
+
+1. **Site configuration → Identity → Enable Identity.**
+2. **Site configuration → Identity → External providers → toggle Google on.** No Google Cloud Console setup needed — Netlify ships a default, shared OAuth app for this, so flipping the toggle is the whole setup. Nothing to configure in code either: the widget's login modal shows a "Sign in with Google" button automatically once a provider is enabled here.
+   - Optional: register your own OAuth Client ID/Secret in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and paste it into this same screen if you want *your* app name/logo on Google's consent screen instead of Netlify's shared one (redirect URI would be `https://<your-site>/.netlify/identity/callback`). Purely cosmetic — the default app works identically otherwise.
+3. That's it locally too: `netlify dev` proxies Identity the same way it proxies `/api/football/*`, as long as this folder is linked to the Netlify site where you enabled it (`npx netlify link`).
+
+**Passkeys/WebAuthn are not supported** — checked against the widget's actual source (no WebAuthn code anywhere) and current Netlify community status (it's an open feature request, not shipped). Email/password and any OAuth providers you enable (Google, GitHub, GitLab, Bitbucket) are what's available.
+
+### Invite-only lock-down
+
+This app doesn't allow open signup — access is by invite only, enforced in two places:
+
+1. **Netlify dashboard (you set this):** Site configuration → Identity → Registration preferences → **Invite only**. This is what actually stops someone from self-registering; Identity → Invite users is how you add people (they get an email with a `#invite_token=...` link that the widget picks up automatically and prompts them to set a password).
+2. **The app itself (already wired up):**
+   - `src/components/auth/AuthGate.tsx` wraps the entire router — nothing renders (not even the header/nav) until `useAuth()` reports a signed-in user. Logged out, you get `LockedScreen` and nothing else.
+   - `netlify/functions/football.mts` independently requires a valid session too. This matters because the UI gate alone is cosmetic — anyone could otherwise call `/api/football/*` directly and burn your API-Football quota without ever signing in. The function uses the *classic* `handler(event, context)` signature specifically because Netlify's gateway only auto-verifies the caller's Identity JWT and populates `context.clientContext.user` for that signature (confirmed by checking `@netlify/types` — the newer `Context` type used by the `export default (req, context) =>` style has no identity field at all). The frontend attaches the token itself: `src/lib/identityClient.ts` pulls the current user's JWT (auto-refreshed) and `src/api/client.ts` sends it as `Authorization: Bearer <token>` on every request.
 
 ## Getting an API key
 

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api/client'
 
+// Extra random delay (0..this) added on top of `pollMs` for hooks polling
+// live data. Keeps concurrent clients from all missing the server-side blob
+// cache at the same instant — see the `jitterMs` comment below.
+export const LIVE_DATA_JITTER_MS = 60_000
+
 interface UseApiState<T> {
   data: T | null
   loading: boolean
@@ -15,7 +20,7 @@ interface UseApiState<T> {
 export function useApi<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   deps: unknown[],
-  options?: { enabled?: boolean; pollMs?: number },
+  options?: { enabled?: boolean; pollMs?: number; jitterMs?: number },
 ): UseApiState<T> & { refetch: () => void } {
   const [state, setState] = useState<UseApiState<T>>({ data: null, loading: true, error: null })
   const fetcherRef = useRef(fetcher)
@@ -44,12 +49,30 @@ export function useApi<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, enabled, tick])
 
+  const pollMs = options?.pollMs
+  const jitterMs = options?.jitterMs
   useEffect(() => {
-    if (!options?.pollMs || !enabled) return
-    const interval = setInterval(() => setTick((t) => t + 1), options.pollMs)
-    return () => clearInterval(interval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options?.pollMs, enabled])
+    if (!pollMs || !enabled) return
+    let timeoutId: ReturnType<typeof setTimeout>
+
+    // Re-rolled every cycle (rather than a single fixed per-mount offset) so
+    // many concurrent clients polling the same live data stay decorrelated
+    // over time instead of drifting back into lockstep. This gives the
+    // server-side blob cache a real chance to absorb repeat requests: the
+    // first client to land after the cache goes stale refreshes it, and
+    // others land within the jitter window and get a cache hit instead of
+    // each independently hitting the upstream API.
+    const schedule = () => {
+      const jitter = jitterMs ? Math.random() * jitterMs : 0
+      timeoutId = setTimeout(() => {
+        setTick((t) => t + 1)
+        schedule()
+      }, pollMs + jitter)
+    }
+
+    schedule()
+    return () => clearTimeout(timeoutId)
+  }, [pollMs, jitterMs, enabled])
 
   const refetch = useCallback(() => setTick((t) => t + 1), [])
 

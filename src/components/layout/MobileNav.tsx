@@ -1,18 +1,20 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Home, Trophy, Search, Image, X } from 'lucide-react'
+import { Home, Trophy, Search, Image, X, LogIn, LogOut } from 'lucide-react'
 import clsx from 'clsx'
 import { SearchBar } from '../search/SearchBar'
 import { useSettings } from '../../context/SettingsContext'
+import { useAuth } from '../../context/AuthContext'
 
 export function MobileNav() {
   const [searchOpen, setSearchOpen] = useState(false)
   const { showPlayerPhotos, toggleShowPlayerPhotos } = useSettings()
+  const { user, ready, login, logout } = useAuth()
 
   return (
     <>
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border-soft bg-surface/95 backdrop-blur md:hidden">
-        <div className="grid grid-cols-4">
+        <div className="grid grid-cols-5">
           <TabItem to="/" icon={<Home size={19} />} label="Home" end />
           <TabItem to="/leagues" icon={<Trophy size={19} />} label="Leagues" />
           <button onClick={() => setSearchOpen(true)} className="flex flex-col items-center gap-0.5 py-2.5 text-text-muted">
@@ -26,6 +28,12 @@ export function MobileNav() {
             <Image size={19} />
             <span className="text-[10px]">Photos</span>
           </button>
+          {ready && (
+            <button onClick={user ? logout : login} className="flex flex-col items-center gap-0.5 py-2.5 text-text-muted">
+              {user ? <LogOut size={19} /> : <LogIn size={19} />}
+              <span className="text-[10px]">{user ? 'Sign out' : 'Sign in'}</span>
+            </button>
+          )}
         </div>
       </nav>
 

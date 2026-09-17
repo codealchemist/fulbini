@@ -7,7 +7,7 @@ import {
   getFixtureStatistics,
   getHeadToHead,
 } from '../api/endpoints'
-import { useApi } from '../hooks/useApi'
+import { LIVE_DATA_JITTER_MS, useApi } from '../hooks/useApi'
 import { LIVE_STATUS_CODES } from '../api/types'
 import { formatFullDate, formatKickoff } from '../lib/date'
 import { Loader } from '../components/common/Loader'
@@ -26,7 +26,10 @@ export function MatchPage() {
   const { id } = useParams<{ id: string }>()
   const fixtureId = Number(id)
 
-  const fixture = useApi((signal) => getFixtureById(fixtureId, signal), [fixtureId], { pollMs: 45_000 })
+  const fixture = useApi((signal) => getFixtureById(fixtureId, signal), [fixtureId], {
+    pollMs: 45_000,
+    jitterMs: LIVE_DATA_JITTER_MS,
+  })
   const fx = fixture.data?.[0]
   const isLive = fx ? LIVE_STATUS_CODES.has(fx.fixture.status.short) : false
   const hasStarted = fx ? fx.goals.home !== null : false
@@ -34,6 +37,7 @@ export function MatchPage() {
   const events = useApi((signal) => getFixtureEvents(fixtureId, signal), [fixtureId], {
     enabled: hasStarted,
     pollMs: isLive ? 45_000 : undefined,
+    jitterMs: isLive ? LIVE_DATA_JITTER_MS : undefined,
   })
   const lineups = useApi((signal) => getFixtureLineups(fixtureId, signal), [fixtureId], { enabled: hasStarted })
   const stats = useApi((signal) => getFixtureStatistics(fixtureId, signal), [fixtureId], { enabled: hasStarted })

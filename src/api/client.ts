@@ -1,4 +1,5 @@
 import type { ApiEnvelope } from './types'
+import { getAuthToken } from '../lib/identityClient'
 
 const BASE = '/api/football'
 
@@ -22,12 +23,24 @@ function buildQuery(params?: Record<string, string | number | boolean | undefine
   return qs ? `?${qs}` : ''
 }
 
+// The football proxy function requires a signed-in Netlify Identity user
+// (see netlify/functions/football.mts) — the app itself is invite-only and
+// gated on this same session, so a token is always available by the time
+// any page actually calls this, but requests fail cleanly (401) if not.
+async function authorizedFetch(url: string, signal?: AbortSignal): Promise<Response> {
+  const token = await getAuthToken()
+  return fetch(url, {
+    signal,
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  })
+}
+
 export async function apiGet<T>(
   path: string,
   params?: Record<string, string | number | boolean | undefined | null>,
   signal?: AbortSignal,
 ): Promise<T[]> {
-  const res = await fetch(`${BASE}${path}${buildQuery(params)}`, { signal })
+  const res = await authorizedFetch(`${BASE}${path}${buildQuery(params)}`, signal)
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`
@@ -64,7 +77,7 @@ export async function apiGetObject<T>(
   params?: Record<string, string | number | boolean | undefined | null>,
   signal?: AbortSignal,
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}${buildQuery(params)}`, { signal })
+  const res = await authorizedFetch(`${BASE}${path}${buildQuery(params)}`, signal)
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`
